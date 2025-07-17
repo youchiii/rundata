@@ -1,6 +1,6 @@
-streamlit run rundata_app.py
+ローカルで実行する時に打つコマンドstreamlit run rundata_app.py
 
-libraries
+仕様ライブラリ
 streamlit
 scipy
 numpy
