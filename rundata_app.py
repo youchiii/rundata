@@ -1,201 +1,138 @@
-import io
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-import plotly.express as px
 import streamlit as st
-from factor_analyzer import FactorAnalyzer
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from scipy.stats import chi2_contingency, ttest_ind
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.decomposition import FactorAnalysis
 
-# -----------------------------------------------------------------------------
-# ページ設定 & テーマカラー（.streamlit/config.toml を使う場合はファイル側で指定）
-# -----------------------------------------------------------------------------
-st.set_page_config(
-    page_title="RunData Analyzer",
-    page_icon="🏃",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="時系列データ解析アプリ", layout="wide")
+st.title("🏃‍♂️ マラソンデータ解析アプリ")
+st.write("CSVをアップロードし、可視化・統計解析・因子分析・重回帰分析を行えます。")
 
-st.title("🏃‍♂️ RunData Analyzer")
-
-# -----------------------------------------------------------------------------
-# セッションステート初期化
-# -----------------------------------------------------------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []  # 最後にアップロードした DataFrame を最大5件保存
-if "current_df" not in st.session_state:
-    st.session_state.current_df = None
-if "report_text" not in st.session_state:
-    st.session_state.report_text = ""
-
-# -----------------------------------------------------------------------------
-# サイドバー: ページ切替 & ファイルアップロード
-# -----------------------------------------------------------------------------
-page = st.sidebar.radio("ページを選択", [
-    "データ取込",
-    "EDA",
-    "統計解析",
-    "可視化"
-])
-
-uploaded_file = st.sidebar.file_uploader("📂 CSV ファイルをアップロード", type="csv")
+df = None
+uploaded_file = st.sidebar.file_uploader("📂 CSVファイルをアップロード", type="csv")
 if uploaded_file:
     try:
-        df = pd.read_csv(uploaded_file)
-        st.session_state.current_df = df
-        # 履歴の先頭に追加、同名ファイルは重複排除
-        st.session_state.history = [h for h in st.session_state.history if h[0] != uploaded_file.name]
-        st.session_state.history.insert(0, (uploaded_file.name, df))
-        st.session_state.history = st.session_state.history[:5]  # 最大5件
-        st.toast(f"{uploaded_file.name} を読み込みました", icon="✅")
-    except Exception as e:
-        st.toast(f"読み込みエラー: {e}", icon="❌")
+        df = pd.read_csv(uploaded_file, encoding="shift_jis")
+    except UnicodeDecodeError:
+        df = pd.read_csv(uploaded_file, encoding="utf-8")
 
-# アップロード履歴から再選択
-if st.session_state.history:
-    names = [h[0] for h in st.session_state.history]
-    choice = st.sidebar.selectbox("履歴から選択", names, index=0 if st.session_state.current_df is None else names.index(st.session_state.history[0][0]))
-    st.session_state.current_df = dict(st.session_state.history)[choice]
+page = st.sidebar.radio("📄 表示ページを選択", ["📈 データ可視化", "📊 統計解析", "📉 重回帰分析", "🧠 因子分析"])
 
-# データがない場合はメインにヒント表示して早期 return
-if st.session_state.current_df is None:
-    st.info("左のサイドバーから CSV をアップロードしてください。")
-    st.stop()
+if df is not None:
+    numeric_cols = df.select_dtypes(include='number').columns
+    cat_cols = [col for col in df.columns if df[col].nunique() < 10]
 
-# DataFrame ショートハンド
-_df = st.session_state.current_df
+    if page == "📈 データ可視化":
+        st.subheader("📋 データプレビュー")
+        st.dataframe(df, use_container_width=True)
 
-# -----------------------------------------------------------------------------
-# 1. データ取込ページ
-# -----------------------------------------------------------------------------
-if page == "データ取込":
-    st.subheader("データプレビュー")
-    st.dataframe(_df, use_container_width=True)
-    st.write(f"📏 **{_df.shape[0]} 行 × {_df.shape[1]} 列**")
+        st.subheader("📈 各項目の可視化・統計")
+        for col in numeric_cols:
+            st.markdown(f"### 🔹 {col}")
+            col1, col2 = st.columns([2, 1])
 
-# -----------------------------------------------------------------------------
-# 2. EDA ページ
-# -----------------------------------------------------------------------------
-if page == "EDA":
-    st.subheader("基本統計量 & 欠損確認")
+            with col1:
+                st.plotly_chart(px.line(df, y=col, title=f"{col} の推移", markers=True), use_container_width=True)
+                st.plotly_chart(px.histogram(df, x=col, title=f"{col} の度数分布"), use_container_width=True)
+            with col2:
+                st.markdown("**基本統計量**")
+                st.write(f"- 平均: {df[col].mean():.2f}")
+                st.write(f"- 中央値: {df[col].median():.2f}")
+                mode_val = df[col].mode().iat[0] if not df[col].mode().empty else "なし"
+                st.write(f"- 最頻値: {mode_val}")
+                st.write(f"- 分散: {df[col].var():.2f}")
+                st.write(f"- 標準偏差: {df[col].std():.2f}")
 
-    st.write("### 基本統計量 (describe)")
-    st.dataframe(_df.describe(include="all").transpose(), use_container_width=True)
+        st.subheader("📊 相関係数マトリクス")
+        st.plotly_chart(px.imshow(df[numeric_cols].corr(), text_auto=True, color_continuous_scale="Blues"), use_container_width=True)
 
-    st.write("### 欠損値割合")
-    na_pct = _df.isna().mean().sort_values(ascending=False) * 100
-    na_df = na_pct.to_frame("Missing %")
-    st.dataframe(na_df, use_container_width=True, height=300)
+    elif page == "📊 統計解析":
+        st.subheader("🔁 クロス集計・χ²検定")
+        if len(cat_cols) >= 2:
+            cat1 = st.selectbox("カテゴリ列①", cat_cols, key="cat1")
+            cat2 = st.selectbox("カテゴリ列②", cat_cols, key="cat2")
 
-    # 欠損ヒートマップ
-    st.write("### 欠損ヒートマップ")
-    fig_na = px.imshow(_df.isna(), aspect="auto", color_continuous_scale=["#eeeeee", "#ff6961"])
-    st.plotly_chart(fig_na, use_container_width=True)
+            if st.button("χ²検定を実行"):
+                ctab = pd.crosstab(df[cat1], df[cat2])
+                st.dataframe(ctab)
 
-    # 相関ヒートマップ
-    numeric_cols = _df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) > 1:
-        st.write("### 相関係数ヒートマップ (Pearson)")
-        corr = _df[numeric_cols].corr()
-        fig_corr = px.imshow(corr, text_auto=True, aspect="auto", color_continuous_scale="RdBu_r")
-        st.plotly_chart(fig_corr, use_container_width=True)
+                chi2, p, dof, expected = chi2_contingency(ctab)
+                st.write(f"χ²統計量: {chi2:.4f}, 自由度: {dof}, p値: {p:.4f}")
+                st.success("有意な差あり（p < 0.05）" if p < 0.05 else "有意な差なし")
 
-# -----------------------------------------------------------------------------
-# 3. 統計解析ページ
-# -----------------------------------------------------------------------------
-if page == "統計解析":
-    st.subheader("統計解析メニュー")
-    analysis_type = st.selectbox("解析タイプを選択", [
-        "因子分析 (Factor Analysis)",
-        "線形回帰モデル"
-    ])
+        st.subheader("📐 t検定（2群）")
+        if len(cat_cols) >= 1 and len(numeric_cols) >= 1:
+            num_col = st.selectbox("数値列", numeric_cols)
+            group_col = st.selectbox("グループ列", cat_cols)
 
-    # 共通: 解析用数値列選択
-    numeric_cols = _df.select_dtypes(include=[np.number]).columns.tolist()
-    if not numeric_cols:
-        st.warning("数値列がありません。別のデータセットをアップロードしてください。")
-        st.stop()
+            groups = df[group_col].dropna().unique()
+            if len(groups) == 2:
+                g1, g2 = groups
+                data1 = df[df[group_col] == g1][num_col]
+                data2 = df[df[group_col] == g2][num_col]
 
-    if analysis_type.startswith("因子分析"):
-        st.write("#### 因子分析の前処理")
-        selected = st.multiselect("使用する数値列 (2列以上)", numeric_cols, default=numeric_cols[:min(5, len(numeric_cols))])
-        n_factors = st.slider("抽出する因子の数", 1, min(len(selected), 10), 2)
-        if st.button("実行", key="fa_run"):
-            try:
-                fa = FactorAnalyzer(n_factors=n_factors, rotation="varimax")
-                fa.fit(_df[selected].dropna())
-                loadings = pd.DataFrame(fa.loadings_, index=selected, columns=[f"Factor{i+1}" for i in range(n_factors)])
-                st.write("### 因子負荷量")
-                st.dataframe(loadings, use_container_width=True)
+                t_stat, p_val = ttest_ind(data1, data2, equal_var=False)
+                st.write(f"{g1} vs {g2}")
+                st.write(f"t統計量: {t_stat:.4f}, p値: {p_val:.4f}")
+                st.success("有意差あり（p < 0.05）" if p_val < 0.05 else "有意差なし")
 
-                # スクリープロット
-                st.write("### 固有値 (Scree Plot)")
-                ev, _ = fa.get_eigenvalues()
-                fig_scree = px.line(x=np.arange(1, len(ev) + 1), y=ev, markers=True, labels={"x": "Factor", "y": "Eigenvalue"})
-                st.plotly_chart(fig_scree, use_container_width=True)
+    elif page == "📉 重回帰分析":
+        if len(numeric_cols) >= 2:
+            st.subheader("📉 重回帰分析")
+            target = st.selectbox("🎯 目的変数", numeric_cols)
+            features = st.multiselect("🧮 説明変数", [col for col in numeric_cols if col != target])
 
-                st.session_state.report_text = loadings.to_csv()
-            except Exception as e:
-                st.toast(f"因子分析エラー: {e}", icon="❌")
+            if features:
+                X = df[features].dropna()
+                y = df[target].loc[X.index]
 
-    elif analysis_type == "線形回帰モデル":
-        st.write("#### 回帰設定")
-        target = st.selectbox("目的変数 (y)", numeric_cols)
-        features = st.multiselect("説明変数 (X)", [c for c in numeric_cols if c != target], default=[c for c in numeric_cols if c != target])
-        test_size = st.slider("テストデータ割合", 0.1, 0.5, 0.2, step=0.05)
-        if st.button("実行", key="lr_run"):
-            try:
-                X_train, X_test, y_train, y_test = train_test_split(_df[features].dropna(), _df[target].dropna(), test_size=test_size, random_state=42)
                 model = LinearRegression()
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                score = r2_score(y_test, y_pred)
-                st.success(f"R²: {score:.3f}")
+                model.fit(X, y)
+                y_pred = model.predict(X)
 
-                coeff_df = pd.DataFrame({"Feature": features, "Coefficient": model.coef_})
-                st.dataframe(coeff_df, use_container_width=True)
+                st.markdown("#### ✅ 結果")
+                st.write(f"決定係数（R²）: {r2_score(y, y_pred):.4f}")
+                st.write(f"平均二乗誤差（MSE）: {mean_squared_error(y, y_pred):.4f}")
 
-                st.session_state.report_text = coeff_df.to_csv()
-            except Exception as e:
-                st.toast(f"回帰モデルエラー: {e}", icon="❌")
+                coef_df = pd.DataFrame({"変数": features, "係数": model.coef_})
+                st.dataframe(coef_df)
 
-    # ダウンロードボタン
-    if st.session_state.report_text:
-        st.download_button(
-            "⬇️ 解析結果を CSV ダウンロード",
-            data=st.session_state.report_text,
-            file_name="analysis_result.csv",
-            mime="text/csv",
-        )
+                equation = f"{target} = " + " + ".join([f"{coef:.2f}×{var}" for coef, var in zip(model.coef_, features)])
+                st.markdown(f"#### 📏 回帰式：{equation}")
 
-# -----------------------------------------------------------------------------
-# 4. 可視化ページ
-# -----------------------------------------------------------------------------
-if page == "可視化":
-    st.subheader("インタラクティブ可視化")
+                st.markdown("#### 実測 vs 予測")
+                fig = px.scatter(x=y, y=y_pred, labels={"x": "実測値", "y": "予測値"})
+                fig.add_shape(type="line", x0=y.min(), y0=y.min(), x1=y.max(), y1=y.max(), line=dict(dash="dash"))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("説明変数を1つ以上選択してください。")
 
-    numeric_cols = _df.select_dtypes(include=[np.number]).columns.tolist()
-    if len(numeric_cols) < 2:
-        st.warning("数値列が2つ以上必要です。")
-        st.stop()
+    elif page == "🧠 因子分析":
+        st.subheader("🧠 因子分析（Factor Analysis）")
+        n_factors = st.slider("抽出する因子数", 1, min(len(numeric_cols), 10), 2)
+        st.markdown(
+    """
+    ℹ️ **因子数のヒント**  
+    - 因子数は「相関のある変数群をいくつの潜在的な要因（因子）で説明できるか」の目安です。  
+    - 通常、**固有値 > 1** の因子数や、「見たい視点」に応じて2～5個程度を選ぶことが多いです。  
+    - 変数数が少ない場合は、**因子数を少なめ**にするのがおすすめです。
+    """
+)
+        if len(numeric_cols) >= 2:
+            fa = FactorAnalysis(n_components=n_factors)
+            fa.fit(df[numeric_cols].dropna())
 
-    x_axis = st.selectbox("X 軸", numeric_cols, index=0)
-    y_axis = st.selectbox("Y 軸", [c for c in numeric_cols if c != x_axis], index=1)
-    color_col = st.selectbox("カラー分類 (任意)", [None] + _df.columns.tolist())
+            st.write("🔢 固有値（各因子の寄与）")
+            evr = np.var(fa.transform(df[numeric_cols].dropna()), axis=0)
+            for i, val in enumerate(evr):
+                st.write(f"因子{i+1}: {val:.4f}")
 
-    fig_scatter = px.scatter(_df, x=x_axis, y=y_axis, color=color_col, title="Scatter Plot")
-    st.plotly_chart(fig_scatter, use_container_width=True)
+            st.write("📊 因子負荷量（Factor Loadings）")
+            loadings = pd.DataFrame(fa.components_.T, index=numeric_cols, columns=[f"因子{i+1}" for i in range(n_factors)])
+            st.dataframe(loadings.style.highlight_max(axis=1))
 
-    st.write("### ヒストグラム / KDE")
-    hist_col = st.selectbox("ヒストグラム対象列", numeric_cols)
-    fig_hist = px.histogram(_df, x=hist_col, marginal="box", nbins=30)
-    st.plotly_chart(fig_hist, use_container_width=True)
-
-# -----------------------------------------------------------------------------
-# フッター
-# -----------------------------------------------------------------------------
-st.caption("Made with Streamlit · Cached with @st.cache_data · Theme customizable via .streamlit/config.toml")
+else:
+    st.info("左のサイドバーからCSVファイルをアップロードしてください。")
