@@ -5,7 +5,15 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from factor_analyzer import FactorAnalyzer
+
+# -----------------------------------------------------------
+# Optional import: factor_analyzer may not be installed yet
+# -----------------------------------------------------------
+try:
+    from factor_analyzer import FactorAnalyzer
+except ModuleNotFoundError:
+    FactorAnalyzer = None  # Fallback; we’ll warn the user later
+
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
@@ -106,35 +114,46 @@ elif page == "統計解析":
     df = pick_from_history()
     if df is not None:
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if len(numeric_cols) < 3:
+        if FactorAnalyzer is None:
+            st.error("因子分析ライブラリ `factor-analyzer` が見つかりません。requirements.txt に `factor-analyzer` を追加してデプロイし直してください。")
+        elif len(numeric_cols) < 3:
             st.warning("因子分析には数値列が最低 3 列必要です。")
         else:
             st.subheader("因子分析")
             n_factors = st.slider("抽出因子数", 1, min(10, len(numeric_cols)), 2)
-            fa = FactorAnalyzer(n_factors=n_factors, rotation="varimax")
-            fa.fit(df[numeric_cols].dropna())
-            loadings = pd.DataFrame(
-                fa.loadings_,
-                index=numeric_cols,
-                columns=[f"Factor{i+1}" for i in range(n_factors)],
-            )
-            st.dataframe(loadings.round(3))
+            try:
+                fa = FactorAnalyzer(n_factors=n_factors, rotation="varimax")
+                fa.fit(df[numeric_cols].dropna())
+                loadings = pd.DataFrame(
+                    fa.loadings_,
+                    index=numeric_cols,
+                    columns=[f"Factor{i+1}" for i in range(n_factors)],
+                )
+                st.dataframe(loadings.round(3))
+            except Exception as e:
+                st.error(f"因子分析でエラーが発生しました: {e}")
 
         # 簡易回帰モデル
         st.subheader("線形回帰")
-        target = st.selectbox("目的変数", numeric_cols)
-        features = st.multiselect("説明変数", [c for c in numeric_cols if c != target])
-        if target and features:
-            X = df[features].dropna()
-            y = df.loc[X.index, target]
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            model = LinearRegression()
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            st.metric("R2", f"{r2_score(y_test, y_pred):.3f}")
+        if len(numeric_cols) >= 2:
+            target = st.selectbox("目的変数", numeric_cols)
+            features = st.multiselect("説明変数", [c for c in numeric_cols if c != target])
+            if target and features:
+                X = df[features].dropna()
+                y = df.loc[X.index, target]
+                if len(X) < 5:
+                    st.warning("サンプル数が少なすぎます。")
+                else:
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                    model = LinearRegression()
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+                    st.metric("R²", f"{r2_score(y_test, y_pred):.3f}")
 
-            coef_df = pd.DataFrame({"Feature": features, "Coef": model.coef_})
-            st.dataframe(coef_df)
+                    coef_df = pd.DataFrame({"Feature": features, "Coef": model.coef_})
+                    st.dataframe(coef_df)
+        else:
+            st.info("数値列が 2 列未満のため、回帰分析を実行できません。")
 
 # -----------------------------------------------------------------------------
 # ページ 4: 可視化
@@ -144,11 +163,14 @@ elif page == "可視化":
     df = pick_from_history()
     if df is not None:
         num_cols = df.select_dtypes(include=[np.number]).columns
-        col_x = st.selectbox("X 軸", num_cols)
-        col_y = st.selectbox("Y 軸", num_cols, index=1 if len(num_cols) > 1 else 0)
-        if col_x and col_y:
-            fig = px.scatter(df, x=col_x, y=col_y, trendline="ols")
-            st.plotly_chart(fig, use_container_width=True)
+        if len(num_cols) < 2:
+            st.info("数値列が 2 列未満のため、散布図を描けません。")
+        else:
+            col_x = st.selectbox("X 軸", num_cols)
+            col_y = st.selectbox("Y 軸", num_cols, index=1 if len(num_cols) > 1 else 0)
+            if col_x and col_y:
+                fig = px.scatter(df, x=col_x, y=col_y, trendline="ols")
+                st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # ダウンロード
