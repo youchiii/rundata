@@ -5,13 +5,12 @@ import plotly.express as px
 from scipy.stats import chi2_contingency, ttest_ind
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.decomposition import FactorAnalysis
 
 st.set_page_config(page_title="時系列データ解析アプリ", layout="wide")
-
 st.title("🏃‍♂️ マラソンデータ解析アプリ")
-st.write("CSVをアップロードし、可視化・統計解析・重回帰分析を行えます。")
+st.write("CSVをアップロードし、可視化・統計解析・因子分析・重回帰分析を行えます。")
 
-# CSVアップロード
 df = None
 uploaded_file = st.sidebar.file_uploader("📂 CSVファイルをアップロード", type="csv")
 if uploaded_file:
@@ -20,8 +19,7 @@ if uploaded_file:
     except UnicodeDecodeError:
         df = pd.read_csv(uploaded_file, encoding="utf-8")
 
-# ページ切り替え
-page = st.sidebar.radio("📄 表示ページを選択", ["📈 データ可視化", "📊 統計解析", "📉 重回帰分析"])
+page = st.sidebar.radio("📄 表示ページを選択", ["📈 データ可視化", "📊 統計解析", "📉 重回帰分析", "🧠 因子分析"])
 
 if df is not None:
     numeric_cols = df.select_dtypes(include='number').columns
@@ -39,7 +37,6 @@ if df is not None:
             with col1:
                 st.plotly_chart(px.line(df, y=col, title=f"{col} の推移", markers=True), use_container_width=True)
                 st.plotly_chart(px.histogram(df, x=col, title=f"{col} の度数分布"), use_container_width=True)
-
             with col2:
                 st.markdown("**基本統計量**")
                 st.write(f"- 平均: {df[col].mean():.2f}")
@@ -103,11 +100,39 @@ if df is not None:
                 coef_df = pd.DataFrame({"変数": features, "係数": model.coef_})
                 st.dataframe(coef_df)
 
+                equation = f"{target} = " + " + ".join([f"{coef:.2f}×{var}" for coef, var in zip(model.coef_, features)])
+                st.markdown(f"#### 📏 回帰式：{equation}")
+
                 st.markdown("#### 実測 vs 予測")
                 fig = px.scatter(x=y, y=y_pred, labels={"x": "実測値", "y": "予測値"})
                 fig.add_shape(type="line", x0=y.min(), y0=y.min(), x1=y.max(), y1=y.max(), line=dict(dash="dash"))
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.warning("説明変数を1つ以上選択してください。")
+
+    elif page == "🧠 因子分析":
+        st.subheader("🧠 因子分析（Factor Analysis）")
+        n_factors = st.slider("抽出する因子数", 1, min(len(numeric_cols), 10), 2)
+        st.markdown(
+    """
+    ℹ️ **因子数のヒント**  
+    - 因子数は「相関のある変数群をいくつの潜在的な要因（因子）で説明できるか」の目安です。  
+    - 通常、**固有値 > 1** の因子数や、「見たい視点」に応じて2～5個程度を選ぶことが多いです。  
+    - 変数数が少ない場合は、**因子数を少なめ**にするのがおすすめです。
+    """
+)
+        if len(numeric_cols) >= 2:
+            fa = FactorAnalysis(n_components=n_factors)
+            fa.fit(df[numeric_cols].dropna())
+
+            st.write("🔢 固有値（各因子の寄与）")
+            evr = np.var(fa.transform(df[numeric_cols].dropna()), axis=0)
+            for i, val in enumerate(evr):
+                st.write(f"因子{i+1}: {val:.4f}")
+
+            st.write("📊 因子負荷量（Factor Loadings）")
+            loadings = pd.DataFrame(fa.components_.T, index=numeric_cols, columns=[f"因子{i+1}" for i in range(n_factors)])
+            st.dataframe(loadings.style.highlight_max(axis=1))
+
 else:
     st.info("左のサイドバーからCSVファイルをアップロードしてください。")
