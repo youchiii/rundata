@@ -34,13 +34,14 @@ try:
     from reportlab.pdfgen import canvas as rl_canvas # 名前衝突を避けるため別名でインポート
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.utils import ImageReader # 画像埋め込み用に追加
     
     canvas = rl_canvas # グローバル変数canvasにreportlabのCanvasクラスを割り当て
 
     # 日本語フォントの登録
     # ここに日本語フォントファイル（.ttf）のパスを指定してください。
     # 例: 'ipaexg.ttf' がアプリと同じディレクトリにある場合
-    FONT_PATH = 'ipaexm.ttf' # または '/path/to/your/font/ipaexg.ttf'
+    FONT_PATH = 'ipaexg.ttf' # または '/path/to/your/font/ipaexg.ttf'
     
     try:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
@@ -92,35 +93,82 @@ if st.sidebar.button("🔗 このビューを共有"):
 # PDF 出力ユーティリティ
 # ------------------------------------------------------------
 
-def make_pdf(content: str) -> io.BytesIO | None:
-    """与えられた文字列 content を PDF にして返す。reportlab が無ければ None"""
-    # ここでcanvasがNoneの場合があるため、rl_canvasではなく、グローバル変数canvasを使用
+# make_pdf関数を修正し、テキストとPlotly Figureの両方を受け取れるようにする
+def make_pdf(content_list: list) -> io.BytesIO | None:
+    """与えられたコンテンツリスト（文字列またはPlotly Figure）をPDFにして返す。"""
     if canvas is None:
         return None
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter) # reportlab.pdfgen.canvas.Canvasを呼び出す
+    c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     line_height = 14
     
     # 日本語フォントが登録されていれば設定
     if FONT_REGISTERED:
-        c.setFont(FONT_NAME, 12) # フォントサイズも指定
-        line_height = 14 # フォントサイズに合わせて行の高さを調整
+        c.setFont(FONT_NAME, 12)
+        line_height = 14
     else:
-        c.setFont('Helvetica', 12) # デフォルトフォント
+        c.setFont('Helvetica', 12)
 
-    y = height - 40
-    for line in content.splitlines():
-        wrap_width = int((width - 80) / (6 if FONT_REGISTERED else 8))
-        wrapped_lines = textwrap.wrap(line, width=wrap_width)
-        for w_line in wrapped_lines:
+    y = height - 40 # 初期Y座標
+
+    for item in content_list:
+        if isinstance(item, str):
+            # テキストの場合
+            wrap_width = int((width - 80) / (6 if FONT_REGISTERED else 8))
+            wrapped_lines = textwrap.wrap(item, width=wrap_width)
+            for w_line in wrapped_lines:
+                if y < 40: # 改ページ
+                    c.showPage()
+                    y = height - 40
+                    if FONT_REGISTERED:
+                        c.setFont(FONT_NAME, 12) # 改ページ後もフォントを再設定
+                c.drawString(40, y, w_line)
+                y -= line_height
+            y -= line_height # テキストブロックの後に少しスペースを開ける
+        elif hasattr(item, 'write_image'): # Plotly Figureオブジェクトの場合
+            # グラフをPNG画像としてBytesIOに書き出す
+            img_buffer = io.BytesIO()
+            try:
+                # グラフの幅と高さを調整（PDFページに収まるように）
+                # ここではA4横幅-余白に合わせるため、約500pxに設定
+                img_width = 500
+                img_height = int(item.height * (img_width / item.width)) if item.width else 300
+                
+                item.write_image(img_buffer, format='png', width=img_width, height=img_height, scale=1)
+                img_buffer.seek(0)
+                img = ImageReader(img_buffer)
+
+                # 画像が現在のページに収まるか確認
+                if y - img_height < 40: # 画像がページの下端を超える場合
+                    c.showPage()
+                    y = height - 40 # 新しいページの先頭に移動
+                    if FONT_REGISTERED:
+                        c.setFont(FONT_NAME, 12) # 改ページ後もフォントを再設定
+                
+                # 画像をPDFに描画
+                # X座標は中央揃えにするため (width - img_width) / 2
+                c.drawImage(img, (width - img_width) / 2, y - img_height, width=img_width, height=img_height)
+                y -= (img_height + line_height) # 画像の高さ分と少しスペースをY座標から引く
+            except Exception as e:
+                st.warning(f"グラフのPDF埋め込みに失敗しました: {e}。`kaleido`がインストールされているか確認してください。")
+                if y < 40:
+                    c.showPage()
+                    y = height - 40
+                    if FONT_REGISTERED:
+                        c.setFont(FONT_NAME, 12)
+                c.drawString(40, y, f"[グラフの埋め込みに失敗しました: {item.layout.title.text if item.layout.title else '無題のグラフ'}]")
+                y -= line_height
+        else:
+            # 未知のタイプの場合、文字列として扱う
             if y < 40:
                 c.showPage()
                 y = height - 40
                 if FONT_REGISTERED:
-                    c.setFont(FONT_NAME, 12) # 改ページ後もフォントを再設定
-            c.drawString(40, y, w_line)
+                    c.setFont(FONT_NAME, 12)
+            c.drawString(40, y, str(item))
             y -= line_height
+
     c.save()
     buffer.seek(0)
     return buffer
@@ -138,26 +186,77 @@ if df is not None:
         st.dataframe(df, use_container_width=True)
 
         st.subheader("� 各項目の可視化・統計")
+        
+        # PDFレポートの内容を収集するリスト
+        visualization_report_content = []
+        visualization_report_content.append("【データ可視化レポート】")
+        visualization_report_content.append("")
+        visualization_report_content.append("データプレビュー:")
+        visualization_report_content.append(df.head().to_string(index=False, header=True)) # 先頭5行のみ
+        visualization_report_content.append("")
+
         for col in numeric_cols:
             st.markdown(f"### 🔹 {col}")
             col1, col2 = st.columns([2, 1])
+            
+            # 各項目の可視化・統計のPDF内容を収集
+            visualization_report_content.append(f"🔹 {col}")
+            visualization_report_content.append("")
+
             with col1:
-                st.plotly_chart(px.line(df, y=col, title=f"{col} の推移", markers=True), use_container_width=True)
-                st.plotly_chart(px.histogram(df, x=col, title=f"{col} の度数分布"), use_container_width=True)
+                # 時系列推移グラフ
+                fig_line = px.line(df, y=col, title=f"{col} の推移", markers=True)
+                st.plotly_chart(fig_line, use_container_width=True)
+                visualization_report_content.append(fig_line) # 図オブジェクトをリストに追加
+
+                # 度数分布ヒストグラム
+                fig_hist = px.histogram(df, x=col, title=f"{col} の度数分布")
+                st.plotly_chart(fig_hist, use_container_width=True)
+                visualization_report_content.append(fig_hist) # 図オブジェクトをリストに追加
+
             with col2:
                 st.markdown("**基本統計量**")
-                st.write(f"- 平均: {df[col].mean():.2f}")
-                st.write(f"- 中央値: {df[col].median():.2f}")
+                mean_val = df[col].mean()
+                median_val = df[col].median()
                 mode_val = df[col].mode().iat[0] if not df[col].mode().empty else "なし"
+                var_val = df[col].var()
+                std_val = df[col].std()
+
+                st.write(f"- 平均: {mean_val:.2f}")
+                st.write(f"- 中央値: {median_val:.2f}")
                 st.write(f"- 最頻値: {mode_val}")
-                st.write(f"- 分散: {df[col].var():.2f}")
-                st.write(f"- 標準偏差: {df[col].std():.2f}")
+                st.write(f"- 分散: {var_val:.2f}")
+                st.write(f"- 標準偏差: {std_val:.2f}")
+
+                # 基本統計量をPDF内容に追加
+                visualization_report_content.append(f"基本統計量 ({col}):")
+                visualization_report_content.append(f"  - 平均: {mean_val:.2f}")
+                visualization_report_content.append(f"  - 中央値: {median_val:.2f}")
+                visualization_report_content.append(f"  - 最頻値: {mode_val}")
+                visualization_report_content.append(f"  - 分散: {var_val:.2f}")
+                visualization_report_content.append(f"  - 標準偏差: {std_val:.2f}")
+                visualization_report_content.append("")
 
         st.subheader("📊 相関係数マトリクス")
-        st.plotly_chart(
-            px.imshow(df[numeric_cols].corr(), text_auto=True, color_continuous_scale="Blues"),
-            use_container_width=True,
-        )
+        fig_corr = px.imshow(df[numeric_cols].corr(), text_auto=True, color_continuous_scale="Blues", title="相関係数マトリクス")
+        st.plotly_chart(fig_corr, use_container_width=True)
+        visualization_report_content.append(fig_corr) # 図オブジェクトをリストに追加
+        visualization_report_content.append("")
+
+        # PDFレポートのダウンロードボタン (データ可視化ページ用)
+        if canvas and visualization_report_content:
+            pdf_buf = make_pdf(visualization_report_content)
+            st.download_button(
+                "📄 データ可視化レポートをダウンロード",
+                pdf_buf,
+                file_name="visualization_report.pdf",
+                mime="application/pdf"
+            )
+        elif not canvas:
+            st.info("PDF 機能には `reportlab` ライブラリと `kaleido` ライブラリを追加してください。`pip install reportlab kaleido` でインストールできます。")
+        else:
+            st.info("PDFレポートを生成するには、データをアップロードしてください。")
+
 
     # ----------------------------------------------------- 統計解析ページ
     elif page == "📊 統計解析":
@@ -225,7 +324,7 @@ if df is not None:
 
         # ---------- PDF レポートのダウンロードボタン
         if canvas and report_lines:
-            pdf_buf = make_pdf("\n".join(report_lines))
+            pdf_buf = make_pdf(report_lines) # make_pdfはリストを受け取る
             st.download_button(
                 "📄 PDFレポートをダウンロード",
                 pdf_buf,
@@ -233,14 +332,14 @@ if df is not None:
                 mime="application/pdf"
             )
         elif not canvas:
-            st.info("PDF 機能には `reportlab` ライブラリを追加してください。`pip install reportlab` でインストールできます。")
+            st.info("PDF 機能には `reportlab` ライブラリと `kaleido` ライブラリを追加してください。`pip install reportlab kaleido` でインストールできます。")
         else:
             st.info("PDFレポートを生成するには、統計解析を実行してください。")
 
 
     # ----------------------------------------------------- 重回帰分析ページ
     elif page == "📉 重回帰分析":
-        regression_report_lines: list[str] = []
+        regression_report_lines: list = [] # strだけでなくFigureも入る可能性があるので型ヒントをlistに
 
         if len(numeric_cols) >= 2:
             st.subheader("📉 重回帰分析")
@@ -278,7 +377,7 @@ if df is not None:
                             st.markdown(f"#### 📏 回帰式：{full_equation}")
 
                             st.markdown("#### 実測 vs 予測")
-                            fig = px.scatter(
+                            fig_scatter = px.scatter( # 変数名をfig_scatterに変更
                                 x=y_test,
                                 y=y_pred,
                                 labels={'x': '実測値', 'y': '予測値'},
@@ -288,11 +387,11 @@ if df is not None:
                             )
                             min_val = min(y_test.min(), y_pred.min())
                             max_val = max(y_test.max(), y_pred.max())
-                            fig.add_shape(
+                            fig_scatter.add_shape(
                                 type="line", line=dict(dash="dash"),
                                 x0=min_val, y0=min_val, x1=max_val, y1=max_val
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig_scatter, use_container_width=True)
 
                             st.markdown("---")
                             st.markdown("#### 予測結果の詳細")
@@ -312,11 +411,13 @@ if df is not None:
                                 "係数:",
                                 coef_df.to_string(index=False, header=True),
                                 "",
+                                "実測 vs 予測グラフ:",
+                                fig_scatter, # 図オブジェクトをリストに追加
                                 "",
                             ])
 
                             if canvas and regression_report_lines:
-                                pdf_buf = make_pdf("\n".join(regression_report_lines))
+                                pdf_buf = make_pdf(regression_report_lines)
                                 st.download_button(
                                     "📄 重回帰分析レポートをダウンロード",
                                     pdf_buf,
@@ -324,7 +425,7 @@ if df is not None:
                                     mime="application/pdf"
                                 )
                             elif not canvas:
-                                st.info("PDF 機能には `reportlab` ライブラリを追加してください。`pip install reportlab` でインストールできます。")
+                                st.info("PDF 機能には `reportlab` ライブラリと `kaleido` ライブラリを追加してください。`pip install reportlab kaleido` でインストールできます。")
                             else:
                                 st.info("PDFレポートを生成するには、重回帰分析を実行してください。")
 
