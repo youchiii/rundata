@@ -13,20 +13,35 @@ from sklearn.decomposition import FactorAnalysis
 from sklearn.model_selection import train_test_split
 
 # ------------------------------------------------------------
-# PDF 生成用
+# ページ設定 (Streamlitコマンドの最上位に配置)
 # ------------------------------------------------------------
+st.set_page_config(page_title="時系列データ解析アプリ", layout="wide")
+st.title("🏃‍♂️ マラソンデータ解析アプリ")
+st.write(
+    "CSVをアップロードし、可視化・統計解析・因子分析・重回帰分析を行えます。\n\n"
+    "💡 **URL共有ボタン** で現在のページを URL パラメータに保存 → アドレスバーをコピーするとワンクリック共有ができます。"
+)
+
+# ------------------------------------------------------------
+# PDF 生成用 (st.set_page_config() の後に移動)
+# ------------------------------------------------------------
+canvas = None
+FONT_REGISTERED = False
+FONT_NAME = 'IPAexGothic' # デフォルト名を設定
+
 try:
     from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
+    from reportlab.pdfgen import canvas as rl_canvas # 名前衝突を避けるため別名でインポート
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     
+    canvas = rl_canvas # グローバル変数canvasにreportlabのCanvasクラスを割り当て
+
     # 日本語フォントの登録
     # ここに日本語フォントファイル（.ttf）のパスを指定してください。
     # 例: 'ipaexg.ttf' がアプリと同じディレクトリにある場合
     FONT_PATH = 'ipaexg.ttf' # または '/path/to/your/font/ipaexg.ttf'
-    FONT_NAME = 'IPAexGothic'
-
+    
     try:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
         FONT_REGISTERED = True
@@ -35,19 +50,10 @@ try:
         FONT_REGISTERED = False
 
 except ModuleNotFoundError:
+    st.info("PDF 機能には `reportlab` ライブラリを追加してください。`pip install reportlab` でインストールできます。")
     canvas = None
-    FONT_REGISTERED = False # reportlab自体がない場合もフォントは登録されない
+    FONT_REGISTERED = False
 
-
-# ------------------------------------------------------------
-# ページ設定
-# ------------------------------------------------------------
-st.set_page_config(page_title="時系列データ解析アプリ", layout="wide")
-st.title("🏃‍♂️ マラソンデータ解析アプリ")
-st.write(
-    "CSVをアップロードし、可視化・統計解析・因子分析・重回帰分析を行えます。\n\n"
-    "💡 **URL共有ボタン** で現在のページを URL パラメータに保存 → アドレスバーをコピーするとワンクリック共有ができます。"
-)
 
 # ------------------------------------------------------------
 # アップロード & クエリパラメータ処理
@@ -88,10 +94,11 @@ if st.sidebar.button("🔗 このビューを共有"):
 
 def make_pdf(content: str) -> io.BytesIO | None:
     """与えられた文字列 content を PDF にして返す。reportlab が無ければ None"""
+    # ここでcanvasがNoneの場合があるため、rl_canvasではなく、グローバル変数canvasを使用
     if canvas is None:
         return None
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    c = canvas.Canvas(buffer, pagesize=letter) # reportlab.pdfgen.canvas.Canvasを呼び出す
     width, height = letter
     line_height = 14
     
@@ -104,9 +111,7 @@ def make_pdf(content: str) -> io.BytesIO | None:
 
     y = height - 40
     for line in content.splitlines():
-        # 日本語フォントが登録されていない場合は、文字化けを避けるためASCII文字のみを考慮
-        # または、より広い幅で折り返す
-        wrap_width = int((width - 80) / (6 if FONT_REGISTERED else 8)) # 日本語フォントがなければ1文字あたりの幅を小さく見積もる
+        wrap_width = int((width - 80) / (6 if FONT_REGISTERED else 8))
         wrapped_lines = textwrap.wrap(line, width=wrap_width)
         for w_line in wrapped_lines:
             if y < 40:
@@ -132,7 +137,7 @@ if df is not None:
         st.subheader("📋 データプレビュー")
         st.dataframe(df, use_container_width=True)
 
-        st.subheader("📈 各項目の可視化・統計")
+        st.subheader("� 各項目の可視化・統計")
         for col in numeric_cols:
             st.markdown(f"### 🔹 {col}")
             col1, col2 = st.columns([2, 1])
