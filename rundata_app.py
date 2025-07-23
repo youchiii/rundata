@@ -40,7 +40,7 @@ try:
     # 日本語フォントの登録
     # ここに日本語フォントファイル（.ttf）のパスを指定してください。
     # 例: 'ipaexg.ttf' がアプリと同じディレクトリにある場合
-    FONT_PATH = 'ipaexg.ttf' # または '/path/to/your/font/ipaexg.ttf'
+    FONT_PATH = 'ipaexm.ttf' # または '/path/to/your/font/ipaexg.ttf'
     
     try:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
