@@ -41,7 +41,7 @@ try:
     # 日本語フォントの登録
     # ここに日本語フォントファイル（.ttf）のパスを指定してください。
     # 例: 'ipaexg.ttf' がアプリと同じディレクトリにある場合
-    FONT_PATH = 'ipaexm.ttf' # または '/path/to/your/font/ipaexg.ttf'
+    FONT_PATH = 'ipaexg.ttf' # または '/path/to/your/font/ipaexg.ttf'
     
     try:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
@@ -131,9 +131,14 @@ def make_pdf(content_list: list) -> io.BytesIO | None:
             img_buffer = io.BytesIO()
             try:
                 # グラフの幅と高さを調整（PDFページに収まるように）
+                # Plotly Figureの幅と高さはitem.layout.width, item.layout.heightで取得
+                # デフォルト値も考慮
+                original_width = item.layout.width if item.layout.width else 700 # デフォルト幅
+                original_height = item.layout.height if item.layout.height else 450 # デフォルト高さ
+
                 # ここではA4横幅-余白に合わせるため、約500pxに設定
                 img_width = 500
-                img_height = int(item.height * (img_width / item.width)) if item.width else 300
+                img_height = int(original_height * (img_width / original_width)) if original_width else 300
                 
                 item.write_image(img_buffer, format='png', width=img_width, height=img_height, scale=1)
                 img_buffer.seek(0)
@@ -185,7 +190,7 @@ if df is not None:
         st.subheader("📋 データプレビュー")
         st.dataframe(df, use_container_width=True)
 
-        st.subheader("� 各項目の可視化・統計")
+        st.subheader("📈 各項目の可視化・統計")
         
         # PDFレポートの内容を収集するリスト
         visualization_report_content = []
