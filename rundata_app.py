@@ -18,8 +18,25 @@ from sklearn.model_selection import train_test_split
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    
+    # 日本語フォントの登録
+    # ここに日本語フォントファイル（.ttf）のパスを指定してください。
+    # 例: 'ipaexg.ttf' がアプリと同じディレクトリにある場合
+    FONT_PATH = 'ipaexg.ttf' # または '/path/to/your/font/ipaexg.ttf'
+    FONT_NAME = 'IPAexGothic'
+
+    try:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
+        FONT_REGISTERED = True
+    except Exception as e:
+        st.warning(f"日本語フォントの登録に失敗しました: {e}。PDFで文字化けする可能性があります。")
+        FONT_REGISTERED = False
+
 except ModuleNotFoundError:
     canvas = None
+    FONT_REGISTERED = False # reportlab自体がない場合もフォントは登録されない
 
 
 # ------------------------------------------------------------
@@ -77,13 +94,26 @@ def make_pdf(content: str) -> io.BytesIO | None:
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     line_height = 14
+    
+    # 日本語フォントが登録されていれば設定
+    if FONT_REGISTERED:
+        c.setFont(FONT_NAME, 12) # フォントサイズも指定
+        line_height = 14 # フォントサイズに合わせて行の高さを調整
+    else:
+        c.setFont('Helvetica', 12) # デフォルトフォント
+
     y = height - 40
     for line in content.splitlines():
-        wrapped_lines = textwrap.wrap(line, width=int((width - 80) / 6))
+        # 日本語フォントが登録されていない場合は、文字化けを避けるためASCII文字のみを考慮
+        # または、より広い幅で折り返す
+        wrap_width = int((width - 80) / (6 if FONT_REGISTERED else 8)) # 日本語フォントがなければ1文字あたりの幅を小さく見積もる
+        wrapped_lines = textwrap.wrap(line, width=wrap_width)
         for w_line in wrapped_lines:
             if y < 40:
                 c.showPage()
                 y = height - 40
+                if FONT_REGISTERED:
+                    c.setFont(FONT_NAME, 12) # 改ページ後もフォントを再設定
             c.drawString(40, y, w_line)
             y -= line_height
     c.save()
@@ -205,7 +235,6 @@ if df is not None:
 
     # ----------------------------------------------------- 重回帰分析ページ
     elif page == "📉 重回帰分析":
-        # 重回帰分析の結果を格納するリスト
         regression_report_lines: list[str] = []
 
         if len(numeric_cols) >= 2:
@@ -265,7 +294,6 @@ if df is not None:
                             results_df = pd.DataFrame({'実測値': y_test, '予測値': y_pred})
                             st.dataframe(results_df)
 
-                            # PDFレポートの内容を構築
                             regression_report_lines.extend([
                                 "【重回帰分析レポート】",
                                 f"目的変数: {target}",
@@ -277,12 +305,11 @@ if df is not None:
                                 f"回帰式: {full_equation}",
                                 "",
                                 "係数:",
-                                coef_df.to_string(index=False, header=True), # インデックスなしでヘッダーあり
+                                coef_df.to_string(index=False, header=True),
                                 "",
                                 "",
                             ])
 
-                            # 重回帰分析の結果PDFダウンロードボタン
                             if canvas and regression_report_lines:
                                 pdf_buf = make_pdf("\n".join(regression_report_lines))
                                 st.download_button(
