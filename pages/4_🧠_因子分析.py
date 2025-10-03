@@ -1,6 +1,13 @@
+import streamlit as st
+
+# --- Authentication Check ---
+if 'user' not in st.session_state or st.session_state['user']['role'] != 'student':
+    st.error("このページにアクセスする権限がありません。")
+    st.info("生徒アカウントでログインしてください。")
+    st.stop()
+
 import numpy as np
 import pandas as pd
-import streamlit as st
 from sklearn.decomposition import FactorAnalysis
 
 st.title("🧠 因子分析")

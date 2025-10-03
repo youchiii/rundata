@@ -1,5 +1,10 @@
-
 import streamlit as st
+
+# --- Authentication Check ---
+if 'user' not in st.session_state or st.session_state['user']['role'] != 'student':
+    st.error("このページにアクセスする権限がありません。")
+    st.info("生徒アカウントでログインしてください。")
+    st.stop()
 import cv2
 import numpy as np
 import mediapipe as mp

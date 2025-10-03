@@ -1,5 +1,12 @@
-import pandas as pd
 import streamlit as st
+
+# --- Authentication Check ---
+if 'user' not in st.session_state or st.session_state['user']['role'] != 'student':
+    st.error("このページにアクセスする権限がありません。")
+    st.info("生徒アカウントでログインしてください。")
+    st.stop()
+
+import pandas as pd
 from scipy.stats import chi2_contingency, ttest_ind
 
 from utils.pdf_utils import make_pdf, canvas

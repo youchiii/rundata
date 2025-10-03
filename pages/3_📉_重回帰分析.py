@@ -1,6 +1,13 @@
+import streamlit as st
+
+# --- Authentication Check ---
+if 'user' not in st.session_state or st.session_state['user']['role'] != 'student':
+    st.error("このページにアクセスする権限がありません。")
+    st.info("生徒アカウントでログインしてください。")
+    st.stop()
+
 import pandas as pd
 import plotly.express as px
-import streamlit as st
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split

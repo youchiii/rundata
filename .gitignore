@@ -1,0 +1,11 @@
+# Database files
+users.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / Editor specific files
+.vscode/
+.idea/
