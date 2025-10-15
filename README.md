@@ -5,3 +5,4 @@ source venv/bin/activate
 仕様ライブラリやpythonのバージョンは
 requirements.txt
 runtime.txtを参照してください。
+uvicorn backend.app.main:app --reload
