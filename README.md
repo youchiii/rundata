@@ -6,3 +6,14 @@ source venv/bin/activate
 requirements.txt
 runtime.txtを参照してください。
 uvicorn backend.app.main:app --reload
+
+
+cd ~/rundata/backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python -m uvicorn main:app --reload
+
+cd rundata frontend
+npm run dev
